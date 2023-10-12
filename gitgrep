@@ -119,9 +119,25 @@ def search(
                 commit_content = subprocess.check_output(['git', 'diff', to_hash, from_hash]).decode('utf-8')
             elif len(hashes) == 1:
                 # Compare the provided hash against its previous commit
-                from_hash = subprocess.check_output(['git', 'rev-list', '-n', '1', hashes[0] + '^']).decode('utf-8').strip()
+                try:
+                    from_hash = subprocess.check_output(['git', 'rev-list', '-n', '1', hashes[0] + '^'], stderr=open(os.devnull, 'w')).decode('utf-8').strip()
+                except subprocess.CalledProcessError:
+                    # Check if the commit is the first commit
+                    all_commits = subprocess.check_output(['git', 'rev-list', '--max-parents=0', 'HEAD']).decode('utf-8').splitlines()
+                    if hashes[0] in all_commits:
+                        # This is the first commit, handle accordingly
+                        from_hash = None
+                    else:
+                        # There's another issue
+                        typer.echo(f"Error: Unable to get the parent commit for {hashes[0]}.")
+                        continue  # Skip this commit and move to the next one
                 to_hash = hashes[0]
-                commit_content = subprocess.check_output(['git', 'diff', to_hash, from_hash]).decode('utf-8')
+                if from_hash:
+                    commit_content = subprocess.check_output(['git', 'diff', to_hash, from_hash]).decode('utf-8')
+                else:
+                    # If it's the first commit, use git show to get the changes introduced in that commit
+                    commit_content = subprocess.check_output(['git', 'show', to_hash]).decode('utf-8')
+
             else:
                 # Handle the case where no hashes or more than two hashes are provided
                 commit_content = subprocess.check_output(['git', 'show', commit]).decode('utf-8')
