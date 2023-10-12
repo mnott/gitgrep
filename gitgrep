@@ -62,7 +62,7 @@ app = typer.Typer(
     add_completion = False,
     rich_markup_mode = "rich",
     no_args_is_help=True,
-    help="GG is a command line tool to search git commits for a string.",
+    help="Gitgrep is a command line tool to search git commits for a string.",
     epilog="""
     To get help about the tool, call it with the --help option.
     """
@@ -245,6 +245,38 @@ def search(
                 except (UnicodeDecodeError, subprocess.CalledProcessError):
                     # This file is likely a binary file or there was an error fetching its content, so we'll skip it
                     continue
+
+@app.command()
+def log (
+    search_string: str = typer.Argument(..., help="The string to search for in git logs.")
+) -> None:
+    """
+    Search the Git logs for a given string and display the results.
+    """
+    console = Console()
+
+    # Execute the git log command
+    cmd = ['git', 'log', f'-S{search_string}', '--all', '--name-only', '--pretty=format:"%H %ci"']
+    result = subprocess.check_output(cmd).decode('utf-8').splitlines()
+
+    # Create a dictionary to group files by timestamp and commit hash
+    grouped_files = {}
+    commit_hash = None
+    timestamp = None
+    for line in result:
+        if line.startswith('"') and line.endswith('"'):
+            commit_hash, timestamp = line.strip('"').split(' ', 1)
+        elif line:
+            grouped_files.setdefault((timestamp, commit_hash), []).append(line)
+
+    # Display each group as a table
+    for (timestamp, commit_hash), files in grouped_files.items():
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column(f"{timestamp} | {commit_hash}")
+        for file in files:
+            table.add_row(file)
+        console.print(table)
+
 
 
 #
