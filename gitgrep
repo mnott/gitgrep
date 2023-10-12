@@ -169,8 +169,11 @@ def search(
                 highlighted_content = commit_content.replace(search_str, f'[bold red]{search_str}[/bold red]')
 
                 # Create a table for each entry
-                table = Table(show_header=True, header_style="bold magenta")
-                table.add_column(commit_date + " | " + commit + " | " + parent_commit)
+                if raw:
+                    table = Table(show_header=True, header_style="bold magenta", show_edge=False, pad_edge=False)
+                else:
+                    table = Table(show_header=True, header_style="bold magenta")
+                table.add_column(f"{commit_date} | {commit} | {parent_commit}")
                 table.add_row(highlighted_content)
                 console.print(table)
 
@@ -236,7 +239,7 @@ def search(
                             table = Table(show_header=True, header_style="bold magenta", show_edge=False, pad_edge=False)
                         else:
                             table = Table(show_header=True, header_style="bold magenta")
-                        table.add_column(commit_date + " | " + commit + f"\n\n[green]{file}[/green]")
+                        table.add_column(f"{commit_date} | {commit} \n\n[green]{file}[/green]")
                         table.add_row(highlighted_content)
                         console.print(table)
                 except (UnicodeDecodeError, subprocess.CalledProcessError):
