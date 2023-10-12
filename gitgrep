@@ -48,6 +48,7 @@ $ gitgrep search "my search string" -a -r
 
 import subprocess
 import re
+import os
 from rich.table import Table
 from rich.console import Console
 
@@ -130,7 +131,21 @@ def search(
             file = filename_match.group(1) if filename_match else "Unknown File"
 
             # Get the parent commit hash
-            parent_commit = subprocess.check_output(['git', 'rev-parse', f'{commit}^']).decode('utf-8').strip()
+            # parent_commit = subprocess.check_output(['git', 'rev-parse', f'{commit}^']).decode('utf-8').strip()
+
+            try:
+                parent_commit = subprocess.check_output(['git', 'rev-parse', f'{commit}^'], stderr=open(os.devnull, 'w')).decode('utf-8').strip()
+            except subprocess.CalledProcessError:
+                # Check if the commit is the first commit
+                all_commits = subprocess.check_output(['git', 'rev-list', '--max-parents=0', 'HEAD']).decode('utf-8').splitlines()
+                if commit in all_commits:
+                    # This is the first commit, handle accordingly
+                    parent_commit = None
+                else:
+                    # There's another issue
+                    typer.echo(f"Error: Unable to get the parent commit for {commit}.")
+                    continue  # Skip this commit and move to the next one
+
 
             # If the -a option is used, show all commit content if the search string is found
             if all and search_str in commit_content:
