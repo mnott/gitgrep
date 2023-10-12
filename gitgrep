@@ -181,7 +181,7 @@ def search(
                         table = Table(show_header=True, header_style="bold magenta", show_edge=False, pad_edge=False)
                     else:
                         table = Table(show_header=True, header_style="bold magenta")
-                    table.add_column(commit_date + " | " + commit + " | " + parent_commit + f"\n\n[green]{file}[/green]")
+                    table.add_column(f"{commit_date} | {commit} | {parent_commit}\n\n[green]{file}[/green]")
                     table.add_row(content_to_display)
                     console.print(table)
 
