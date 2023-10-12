@@ -1,0 +1,265 @@
+#!/usr/bin/env python
+# encoding: utf-8
+r"""
+
+Search the git repository in the current directory for a given string.
+
+# Overview
+
+This script searches the git repository in the current directory for a given string.
+
+
+# Usage
+
+## General Help
+
+Call the script with the -help as argument to get the help function:
+
+$ gitgrep --help
+
+
+## Help about a command:
+
+To get the help about a command, call the script with the command and the --help option:
+
+$ gitgrep search --help
+
+## Sample Search
+
+$ gitgrep search "my search string" -a
+
+
+## Sample Search using Diff
+
+$ gitgrep search "my search string" -a -d
+
+
+## Sample Search using Diff between two commits
+
+$ gitgrep search "my search string" -d -h 10f6b91b4f624bf67e815d0df74bc5777c2696f2 -h 36937ed0f7703b96d0279d7ee1c78c83eb6315d0
+
+The first hash is the more recent hash, the second hash is the older hash. The script will show the differences between the two commits.
+
+## Raw output
+
+$ gitgrep search "my search string" -a -r
+
+"""
+
+import subprocess
+import re
+from rich.table import Table
+from rich.console import Console
+
+#
+# Command Line Interface
+#
+from typing import List, Optional
+import typer
+
+app = typer.Typer(
+    add_completion = False,
+    rich_markup_mode = "rich",
+    no_args_is_help=True,
+    help="GG is a command line tool to search git commits for a string.",
+    epilog="""
+    To get help about the tool, call it with the --help option.
+    """
+)
+
+#
+# General Command Interface
+#
+@app.command(
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)
+
+@app.command()
+def search(
+    limit:  int           = typer.Option(300,   "--limit", "-l",  help="Maximum length of the line to display."),
+    all:    bool          = typer.Option(False, "--all",   "-a",  help="Show all file contents."),
+    diff:   bool          = typer.Option(False, "--diff",  "-d",  help="Show the differences in the files. Optionally provide a commit hash to compare against."),
+    raw:    bool          = typer.Option(False, "--raw",   "-r",  help="Display without vertical lines around the table."),
+    hashes: List[str]     = typer.Option([],    "--hash",  "-h",  help="Search a specific commit hash to compare with its predecessor, or two hashes to compare a more recent with an older hash, and the history in between"),
+    search_string: Optional[List[str]] = typer.Argument(None,     help="The string to search for.")
+) -> None:
+    """
+    Search the Git repository for a given string.
+    """
+    console = Console()
+
+    # Convert search_string list to a single string
+    search_str = ' '.join(search_string)
+
+    # Determine which commits to search
+    if hashes:
+        if len(hashes) == 1:
+            commit_hashes = [hashes[0]]
+        elif len(hashes) == 2:
+            # If you want to search between two specific commits, you can use the range notation in git.
+            # This will give you all commits from the first hash up to (but not including) the second hash.
+            commit_hashes = subprocess.check_output(['git', 'rev-list', f'{hashes[1]}..{hashes[0]}']).decode('utf-8').splitlines()
+        else:
+            # Handle the case where no hashes or more than two hashes are provided (though the latter shouldn't happen with the current setup)
+            typer.echo("Please provide one or two commit hashes with the -h option.")
+            raise typer.Exit(code=1)
+    else:
+        commit_hashes = subprocess.check_output(['git', 'rev-list', '--all']).decode('utf-8').splitlines()
+
+    for commit in commit_hashes:
+        # Get the commit date
+        commit_date = subprocess.check_output(['git', 'show', '-s', '--format=%ci', commit]).decode('utf-8').strip()
+
+        if diff:
+            if len(hashes) == 2:
+                # Compare between the two provided hashes
+                from_hash = hashes[0]
+                to_hash   = hashes[1]
+                commit_content = subprocess.check_output(['git', 'diff', to_hash, from_hash]).decode('utf-8')
+            elif len(hashes) == 1:
+                # Compare the provided hash against its previous commit
+                from_hash = subprocess.check_output(['git', 'rev-list', '-n', '1', hashes[0] + '^']).decode('utf-8').strip()
+                to_hash = hashes[0]
+                commit_content = subprocess.check_output(['git', 'diff', to_hash, from_hash]).decode('utf-8')
+            else:
+                # Handle the case where no hashes or more than two hashes are provided
+                commit_content = subprocess.check_output(['git', 'show', commit]).decode('utf-8')
+
+            # Extract the filename from the diff
+            filename_match = re.search(r'diff --git a/(.*?) b/', commit_content)
+            file = filename_match.group(1) if filename_match else "Unknown File"
+
+            # Get the parent commit hash
+            parent_commit = subprocess.check_output(['git', 'rev-parse', f'{commit}^']).decode('utf-8').strip()
+
+            # If the -a option is used, show all commit content if the search string is found
+            if all and search_str in commit_content:
+                # Highlight the search string
+                highlighted_content = commit_content.replace(search_str, f'[bold red]{search_str}[/bold red]')
+
+                # Create a table for each entry
+                table = Table(show_header=True, header_style="bold magenta")
+                table.add_column(commit_date + " | " + commit + " | " + parent_commit)
+                table.add_row(highlighted_content)
+                console.print(table)
+
+            # If the -a option is not used, only show content containing the search string
+            elif not all and search_str in commit_content:
+                content_to_display = ''
+                for line in commit_content.splitlines():
+                    if search_str in line and not any(ignore in line for ignore in ["Author:", "-author:", "Signed-off-by:", "+author:"]):
+                        # Find the start position of the search string
+                        start_pos = line.find(search_str)
+
+                        # Adjust the start and end positions based on the specified limit
+                        adjusted_start_pos = max(0, start_pos - limit//2)
+                        adjusted_end_pos   = min(len(line), start_pos + len(search_str) + limit//2)
+                        extracted_content  = line[adjusted_start_pos:adjusted_end_pos]
+
+                        # Highlight the search string within this substring
+                        highlighted_line = extracted_content.replace(search_str, f'[bold red]{search_str}[/bold red]')
+                        content_to_display += highlighted_line + '\n'
+
+                if content_to_display:
+                    # Create a table for each entry
+                    if raw:
+                        table = Table(show_header=True, header_style="bold magenta", show_edge=False, pad_edge=False)
+                    else:
+                        table = Table(show_header=True, header_style="bold magenta")
+                    table.add_column(commit_date + " | " + commit + " | " + parent_commit + f"\n\n[green]{file}[/green]")
+                    table.add_row(content_to_display)
+                    console.print(table)
+
+        else:
+            # Get the list of modified files in the commit
+            modified_files_output = subprocess.check_output(['git', 'diff-tree', '--no-commit-id', '--name-only', '-r', commit]).decode('utf-8')
+            file_paths = modified_files_output.splitlines()
+
+            for file in file_paths:
+                try:
+                    # Get the content of the file
+                    file_content = subprocess.check_output(['git', 'show', f'{commit}:{file}'], stderr=subprocess.DEVNULL).decode('utf-8')
+
+                    # Check if the file contains the search string
+                    if search_str in file_content:
+                        # If the -a option is used, show all commit content
+                        if all:
+                            highlighted_content = file_content.replace(search_str, f'[bold red]{search_str}[/bold red]')
+                        else:
+                            # Find the start position of the search string
+                            start_pos = file_content.find(search_str)
+
+                            # Adjust the start and end positions based on the specified limit
+                            if limit:
+                                adjusted_start_pos = max(0, start_pos - limit//2)
+                                adjusted_end_pos   = min(len(file_content), start_pos + len(search_str) + limit//2)
+                                extracted_content  = file_content[adjusted_start_pos:adjusted_end_pos]
+                            else:
+                                extracted_content  = file_content[start_pos:]
+
+                            # Highlight the search string within this substring
+                            highlighted_content = extracted_content.replace(search_str, f'[bold red]{search_str}[/bold red]')
+
+                        # Create a table for each entry
+                        if raw:
+                            table = Table(show_header=True, header_style="bold magenta", show_edge=False, pad_edge=False)
+                        else:
+                            table = Table(show_header=True, header_style="bold magenta")
+                        table.add_column(commit_date + " | " + commit + f"\n\n[green]{file}[/green]")
+                        table.add_row(highlighted_content)
+                        console.print(table)
+                except (UnicodeDecodeError, subprocess.CalledProcessError):
+                    # This file is likely a binary file or there was an error fetching its content, so we'll skip it
+                    continue
+
+
+#
+# Command: Doc
+#
+@app.command()
+def doc (
+    ctx:        typer.Context,
+    title:      str  = typer.Option(None,   help="The title of the document"),
+    toc:        bool = typer.Option(False,  help="Whether to create a table of contents"),
+) -> None:
+    """
+    Re-create the documentation and write it to the output file.
+    """
+    import importlib
+    import importlib.util
+    import sys
+    import os
+    import doc2md
+
+    def import_path(path):
+        module_name = os.path.basename(path).replace("-", "_")
+        spec = importlib.util.spec_from_loader(
+            module_name,
+            importlib.machinery.SourceFileLoader(module_name, path),
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sys.modules[module_name] = module
+        return module
+
+    mod_name = os.path.basename(__file__)
+    if mod_name.endswith(".py"):
+        mod_name = mod_name.rsplit(".py", 1)[0]
+    atitle = title or mod_name.replace("_", "-")
+    module = import_path(__file__)
+    docstr = module.__doc__
+    result = doc2md.doc2md(docstr, atitle, toc=toc, min_level=0)
+    print(result)
+
+
+
+#
+# Entry Point
+#
+if __name__ == '__main__':
+    try:
+        app()
+    except SystemExit as e:
+        if e.code != 0:
+            raise
+
